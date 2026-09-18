@@ -99,8 +99,13 @@ def reciprocal_rank_fusion(
 # --------------------------------------------------
 
 query = input(
-    "\nAsk a question: "
+    "\nWhat would you like to compare? "
 )
+
+
+# --------------------------------------------------
+# Query embedding
+# --------------------------------------------------
 
 query_embedding = embedding_model.encode(
     query
@@ -121,14 +126,10 @@ final_results = []
 
 
 # --------------------------------------------------
-# Process each paper separately
+# Retrieve evidence from each paper
 # --------------------------------------------------
 
 for paper in papers:
-
-    # ----------------------------------------------
-    # Get all chunks from this paper
-    # ----------------------------------------------
 
     paper_data = collection.get(
         where={
@@ -196,13 +197,13 @@ for paper in papers:
         query
     )
 
-    scores = bm25.get_scores(
+    bm25_scores = bm25.get_scores(
         tokenized_query
     )
 
     bm25_ranked_indices = sorted(
-        range(len(scores)),
-        key=lambda i: scores[i],
+        range(len(bm25_scores)),
+        key=lambda i: bm25_scores[i],
         reverse=True
     )[:10]
 
@@ -213,7 +214,7 @@ for paper in papers:
 
 
     # ----------------------------------------------
-    # Hybrid retrieval using RRF
+    # Hybrid retrieval
     # ----------------------------------------------
 
     hybrid_ids = reciprocal_rank_fusion(
@@ -225,7 +226,7 @@ for paper in papers:
 
 
     # ----------------------------------------------
-    # Build reranker candidates
+    # Candidate documents
     # ----------------------------------------------
 
     id_to_document = dict(
@@ -283,7 +284,7 @@ for paper in papers:
 
 
     # ----------------------------------------------
-    # Keep top 5 from each paper
+    # Keep top 5 evidence chunks
     # ----------------------------------------------
 
     for candidate, score in ranked_candidates[:5]:
@@ -298,238 +299,181 @@ for paper in papers:
 
 
 # --------------------------------------------------
-# Group results by paper
-# --------------------------------------------------
-
-grouped_results = {}
-
-for result in final_results:
-
-    paper = result["paper"]
-
-    if paper not in grouped_results:
-
-        grouped_results[paper] = []
-
-    grouped_results[paper].append(
-        result
-    )
-
-
-# --------------------------------------------------
-# Build globally unique evidence context
+# Build comparison evidence
 # --------------------------------------------------
 
 evidence_context = ""
 
 evidence_number = 1
 
-for paper, results in grouped_results.items():
+for result in final_results:
+
+    result["evidence_id"] = evidence_number
 
     evidence_context += (
-        f"\n\nPAPER: {paper}\n"
+        f"\n[EVIDENCE {evidence_number}]\n"
+        f"Paper: {result['paper']}\n"
+        f"Page: {result['page']}\n"
+        f"Evidence text:\n"
+        f"{result['text']}\n"
     )
 
-    for result in results:
-
-        result["evidence_id"] = evidence_number
-
-        evidence_context += (
-            f"\n[EVIDENCE {evidence_number} | "
-            f"{paper}, Page {result['page']}]\n"
-        )
-
-        evidence_context += result["text"]
-
-        evidence_context += "\n"
-
-        evidence_number += 1
+    evidence_number += 1
 
 
 # --------------------------------------------------
-# Generate answer
+# Generate structured comparison
 # --------------------------------------------------
 
-prompt = f"""
-You are a research assistant.
+def generate_paper_summary(paper_name, evidence):
 
-Answer the user's question using ONLY the evidence
-provided below.
+    prompt = f"""
+You are a research assistant analyzing ONE research paper.
 
-Rules:
+Paper: {paper_name}
 
-1. Do not use outside knowledge.
-
-2. Do not invent facts.
-
-3. Compare the papers when appropriate.
-
-4. Explain how the papers address the challenges
-   mentioned in the question.
-
-5. Keep the answer concise and structured.
-
-6. Organize the answer clearly by paper when useful.
-
-7. Do NOT generate citations.
-
-8. Do NOT generate page numbers.
-
-9. Do NOT generate evidence IDs.
-
-10. Focus only on producing an accurate answer
-    grounded in the provided evidence.
+Use ONLY the evidence below.
 
 Evidence:
+{evidence}
 
-{evidence_context}
+Answer the following five aspects:
 
-Question:
+Problem addressed:
+Main approach:
+Key mechanism:
+Benefits:
+Limitations:
 
-{query}
+Rules:
+- Use only information explicitly supported by the evidence.
+- Do not use outside knowledge.
+- Do not mention other papers.
+- Keep every answer to one concise sentence.
+- If the evidence does not support an aspect, write:
+  Not covered in retrieved evidence.
 
-Answer:
+Return ONLY these five lines in exactly this format:
+
+Problem addressed: ...
+Main approach: ...
+Key mechanism: ...
+Benefits: ...
+Limitations: ...
 """
 
+    response = ollama.chat(
+        model="lfm2.5:8b",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
 
-response = ollama.chat(
-    model="lfm2.5:8b",
-    messages=[
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
+    return response["message"]["content"].strip()
+
+
+# --------------------------------------------------
+# Separate evidence by paper
+# --------------------------------------------------
+
+rag_evidence = ""
+
+nemo_evidence = ""
+
+for result in final_results:
+
+    if result["paper"] == "RAG":
+
+        rag_evidence += (
+            f"\nPage {result['page']}:\n"
+            f"{result['text']}\n"
+        )
+
+    elif result["paper"] == "attention":
+
+        nemo_evidence += (
+            f"\nPage {result['page']}:\n"
+            f"{result['text']}\n"
+        )
+
+
+# --------------------------------------------------
+# Generate independent summaries
+# --------------------------------------------------
+
+rag_summary = generate_paper_summary(
+    "RAG",
+    rag_evidence
+)
+
+nemo_summary = generate_paper_summary(
+    "NeMo Guardrails",
+    nemo_evidence
 )
 
 
-answer = response["message"]["content"].strip()
-
-
 # --------------------------------------------------
-# Deterministic citation generation
+# Parse summaries
 # --------------------------------------------------
 
-# Split answer into sentences
-sentences = re.split(
-    r'(?<=[.!?])\s+',
-    answer
+def parse_summary(summary):
+
+    result = {
+        "Problem addressed": "Not covered in retrieved evidence.",
+        "Main approach": "Not covered in retrieved evidence.",
+        "Key mechanism": "Not covered in retrieved evidence.",
+        "Benefits": "Not covered in retrieved evidence.",
+        "Limitations": "Not covered in retrieved evidence."
+    }
+
+    for line in summary.splitlines():
+
+        line = line.strip()
+
+        for key in result:
+
+            prefix = key + ":"
+
+            if line.startswith(prefix):
+
+                value = line[len(prefix):].strip()
+
+                if value:
+
+                    result[key] = value
+
+    return result
+
+
+rag = parse_summary(
+    rag_summary
+)
+
+nemo = parse_summary(
+    nemo_summary
 )
 
 
 # --------------------------------------------------
-# Prepare evidence embeddings
+# Build comparison table in Python
 # --------------------------------------------------
 
-evidence_items = []
-
-for paper, results in grouped_results.items():
-
-    for result in results:
-
-        evidence_items.append({
-            "evidence_id": result["evidence_id"],
-            "paper": result["paper"],
-            "page": result["page"],
-            "text": result["text"]
-        })
-
-
-evidence_texts = [
-    item["text"]
-    for item in evidence_items
-]
-
-
-if evidence_texts:
-
-    evidence_embeddings = embedding_model.encode(
-        evidence_texts
-    )
-
-else:
-
-    evidence_embeddings = []
+comparison = f"""
+| Aspect | RAG | NeMo Guardrails |
+|---|---|---|
+| Problem addressed | {rag["Problem addressed"]} | {nemo["Problem addressed"]} |
+| Main approach | {rag["Main approach"]} | {nemo["Main approach"]} |
+| Key mechanism | {rag["Key mechanism"]} | {nemo["Key mechanism"]} |
+| Benefits | {rag["Benefits"]} | {nemo["Benefits"]} |
+| Limitations | {rag["Limitations"]} | {nemo["Limitations"]} |
+""".strip()
 
 
 # --------------------------------------------------
-# Match each answer sentence to evidence
-# --------------------------------------------------
-
-cited_answer = ""
-
-for sentence in sentences:
-
-    sentence = sentence.strip()
-
-    if not sentence:
-        continue
-
-    sentence_embedding = embedding_model.encode(
-        sentence
-    )
-
-    similarities = []
-
-    for index, evidence_embedding in enumerate(
-        evidence_embeddings
-    ):
-
-        similarity = embedding_model.similarity(
-            sentence_embedding,
-            evidence_embedding
-        )
-
-        similarities.append(
-            (
-                index,
-                float(similarity)
-            )
-        )
-
-
-    # ----------------------------------------------
-    # Select strongest evidence
-    # ----------------------------------------------
-
-    similarities.sort(
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    top_evidence = similarities[:2]
-
-
-    citations = []
-
-    for index, similarity in top_evidence:
-
-        evidence = evidence_items[index]
-
-        citation = (
-            f"[{evidence['paper']}, "
-            f"Page {evidence['page']}]"
-        )
-
-        if citation not in citations:
-
-            citations.append(
-                citation
-            )
-
-
-    citation_text = " ".join(
-        citations
-    )
-
-
-    cited_answer += (
-        f"{sentence} {citation_text}\n\n"
-    )
-
-
-# --------------------------------------------------
-# Display answer
+# Display comparison
 # --------------------------------------------------
 
 print(
@@ -537,16 +481,16 @@ print(
 )
 
 print(
-    "COMPARATIVE ANSWER:"
+    "MULTI-PAPER COMPARISON:"
 )
 
 print(
-    cited_answer.strip()
+    comparison
 )
 
 
 # --------------------------------------------------
-# Display retrieved evidence
+# Display evidence
 # --------------------------------------------------
 
 print(
@@ -554,41 +498,26 @@ print(
 )
 
 print(
-    "RETRIEVED EVIDENCE:"
+    "EVIDENCE USED:"
 )
 
-
-for paper, results in grouped_results.items():
+for result in final_results:
 
     print(
-        "\n" + "-" * 70
+        f"\n[EVIDENCE {result['evidence_id']}] "
+        f"{result['paper']} - "
+        f"Page {result['page']}"
     )
 
     print(
-        "PAPER:",
-        paper
+        "Chunk ID:",
+        result["chunk_id"]
     )
 
-    for result in results:
-
-        print(
-            f"\nEvidence {result['evidence_id']}"
+    print(
+        "Reranker Score:",
+        round(
+            result["score"],
+            4
         )
-
-        print(
-            "Page:",
-            result["page"]
-        )
-
-        print(
-            "Chunk ID:",
-            result["chunk_id"]
-        )
-
-        print(
-            "Reranker Score:",
-            round(
-                result["score"],
-                4
-            )
-        )
+    )

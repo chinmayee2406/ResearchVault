@@ -1,67 +1,72 @@
 import pymupdf
 from sentence_transformers import SentenceTransformer
 
+from ingestion.chunker import load_chunks
 from embeddings.vector_store import create_collection, add_documents
-
-
-PDF_PATH = "data/papers/attention.pdf"
-
-CHUNK_SIZE = 500
-OVERLAP = 50
-
-
-def load_chunks():
-
-    document = pymupdf.open(PDF_PATH)
-
-    all_chunks = []
-
-    for page_number, page in enumerate(document):
-
-        text = page.get_text().strip()
-
-        if not text:
-            continue
-
-        words = text.split()
-
-        step = CHUNK_SIZE - OVERLAP
-
-        for i in range(0, len(words), step):
-
-            chunk = words[i:i + CHUNK_SIZE]
-
-            if chunk:
-
-                all_chunks.append({
-                    "paper": "NeMo Guardrails",
-                    "page": page_number + 1,
-                    "chunk_id": len(all_chunks),
-                    "text": " ".join(chunk)
-                })
-
-    return all_chunks
 
 
 def main():
 
-    print("Loading paper...")
+    print("Loading papers...")
 
     chunks = load_chunks()
 
-    print("Total chunks:", len(chunks))
+    print(
+        "Total chunks:",
+        len(chunks)
+    )
 
-    print("Loading embedding model...")
+    print("\nChunks by paper:")
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    paper_counts = {}
 
-    texts = [chunk["text"] for chunk in chunks]
+    for chunk in chunks:
 
-    embeddings = model.encode(texts)
+        paper = chunk["paper"]
 
-    print("Embeddings generated:", len(embeddings))
+        paper_counts[paper] = (
+            paper_counts.get(paper, 0) + 1
+        )
+
+    for paper, count in paper_counts.items():
+
+        print(
+            f"- {paper}: {count}"
+        )
+
+    print("\nLoading embedding model...")
+
+    model = SentenceTransformer(
+        "all-MiniLM-L6-v2"
+    )
+
+    texts = [
+        chunk["text"]
+        for chunk in chunks
+    ]
+
+    embeddings = model.encode(
+        texts
+    )
+
+    print(
+        "Embeddings generated:",
+        len(embeddings)
+    )
 
     collection = create_collection()
+
+    print(
+        "\nClearing old ChromaDB data..."
+    )
+
+    existing = collection.get()
+
+    if existing["ids"]:
+
+        collection.delete(
+            ids=existing["ids"]
+        )
 
     add_documents(
         collection,
@@ -69,9 +74,16 @@ def main():
         embeddings
     )
 
-    print("Documents stored in ChromaDB!")
-    print("Collection size:", collection.count())
+    print(
+        "\nDocuments stored in ChromaDB!"
+    )
+
+    print(
+        "Collection size:",
+        collection.count()
+    )
 
 
 if __name__ == "__main__":
+
     main()
