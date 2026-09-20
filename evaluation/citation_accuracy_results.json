@@ -1,0 +1,58 @@
+{
+    "metric": "Citation Accuracy",
+    "description": "Measures whether evidence references in generated answers correctly map to existing ChromaDB chunks and their stored page metadata.",
+    "warning": "This metric validates citation metadata and evidence references. It does not determine whether the cited evidence semantically supports the specific claim.",
+    "overall_score": 1.0,
+    "answers_evaluated": 7,
+    "results": [
+        {
+            "question": "What is Retrieval-Augmented Generation?",
+            "paper": "RAG",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "What are the different paradigms of RAG?",
+            "paper": "RAG",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "What are the main components of a RAG system?",
+            "paper": "RAG",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "How can RAG systems reduce hallucinations?",
+            "paper": "RAG",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "What is NeMo Guardrails?",
+            "paper": "attention",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "How does NeMo Guardrails improve the safety and controllability of LLM applications?",
+            "paper": "attention",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        },
+        {
+            "question": "What types of rails are supported by NeMo Guardrails?",
+            "paper": "attention",
+            "citation_accuracy": 1.0,
+            "valid_references": 5,
+            "total_references": 5
+        }
+    ]
+}
