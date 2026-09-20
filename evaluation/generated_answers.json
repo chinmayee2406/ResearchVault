@@ -1,0 +1,191 @@
+[
+    {
+        "question": "What is Retrieval-Augmented Generation?",
+        "paper": "RAG",
+        "answer": "Retrieval-Augmented Generation (RAG) is a method for large language models that incorporates knowledge from external databases by retrieving relevant document chunks through semantic similarity calculation; this integration enhances the accuracy and credibility of the model's generation, allows continuous updates with domain-specific information, and synergistically merges the intrinsic knowledge of the LLM with external knowledge sources.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_14",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_34",
+                "page": 11
+            },
+            {
+                "chunk_id": "chunk_26",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_19",
+                "page": 4
+            },
+            {
+                "chunk_id": "chunk_16",
+                "page": 2
+            }
+        ]
+    },
+    {
+        "question": "What are the different paradigms of RAG?",
+        "paper": "RAG",
+        "answer": "The survey identifies three main research paradigms of RAG: Naive RAG, Advanced RAG, and Modular RAG.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_15",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_16",
+                "page": 2
+            },
+            {
+                "chunk_id": "chunk_44",
+                "page": 16
+            },
+            {
+                "chunk_id": "chunk_22",
+                "page": 5
+            },
+            {
+                "chunk_id": "chunk_43",
+                "page": 16
+            }
+        ]
+    },
+    {
+        "question": "What are the main components of a RAG system?",
+        "paper": "RAG",
+        "answer": "The main components of a RAG system are indexing, retrieval, and generation. These three stages form the core process described in the evidence (e.g., Naive RAG follows a Retrieve-Read framework of indexing, retrieval, and generation). Advanced and modular variants extend these components with additional optimization strategies but do not introduce new primary parts.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_19",
+                "page": 4
+            },
+            {
+                "chunk_id": "chunk_16",
+                "page": 2
+            },
+            {
+                "chunk_id": "chunk_36",
+                "page": 12
+            },
+            {
+                "chunk_id": "chunk_25",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_17",
+                "page": 3
+            }
+        ]
+    },
+    {
+        "question": "How can RAG systems reduce hallucinations?",
+        "paper": "RAG",
+        "answer": "The evidence indicates that RAG systems can reduce hallucinations through several mechanisms: (1) improving resistance to adversarial or counterfactual inputs is identified as a key performance metric, prompting the development of specialized strategies that integrate retrieval with language-generation models; (2) Self-RAG uses reflection tokens (retrieve and critic) allowing the model to introspect its outputs and autonomously decide when to retrieve information, thereby limiting generation of inaccurate content; and (3) RAG consistently outperforms fine-tuning on existing knowledge, suggesting that this integration reduces reliance on unsupervised learning, which LLMs struggle with and can produce hallucinations. These points together show how RAG can mitigate hallucinations.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_40",
+                "page": 14
+            },
+            {
+                "chunk_id": "chunk_22",
+                "page": 5
+            },
+            {
+                "chunk_id": "chunk_42",
+                "page": 15
+            },
+            {
+                "chunk_id": "chunk_36",
+                "page": 12
+            },
+            {
+                "chunk_id": "chunk_25",
+                "page": 7
+            }
+        ]
+    },
+    {
+        "question": "What is NeMo Guardrails?",
+        "paper": "attention",
+        "answer": "NeMo Guardrails is an open-source toolkit that enables developers to build controllable and safe LLM-based applications by adding programmable guardrails (called rails) expressed in a custom modeling language (Colang). Rails can be defined at runtime, are independent of model alignment strategies, work with multiple LLMs, and provide interpretable control over output. The toolkit uses CoT prompting and a dialogue manager to enforce user-defined constraints, and includes evaluation tools for testing both topical and execution rails. It is presented as a supplement to embedded (alignment) rails rather than a complete stand-alone safety solution.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_11",
+                "page": 6
+            },
+            {
+                "chunk_id": "chunk_1",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_0",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_13",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_12",
+                "page": 7
+            }
+        ]
+    },
+    {
+        "question": "How does NeMo Guardrails improve the safety and controllability of LLM applications?",
+        "paper": "attention",
+        "answer": "NeMo Guardrails improves the safety and controllability of LLM applications by (1) allowing developers to define programmable rails, user-defined constraints expressed in Colang or as custom actions, that enforce policies such as avoiding harmful topics, following a predefined dialogue path, using a specific language style, and extracting structured data; (2) providing a runtime proxy that interprets these rails between the LLM and the application, supplementing embedded alignment techniques and offering interpretable, user-defined controls; and (3) supplying evaluation tools for testing safety-related rails. The authors note that this approach is not a perfect solution and that using Guardrails incurs additional latency and cost compared with a normal LLM call.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_11",
+                "page": 6
+            },
+            {
+                "chunk_id": "chunk_0",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_12",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_13",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_1",
+                "page": 1
+            }
+        ]
+    },
+    {
+        "question": "What types of rails are supported by NeMo Guardrails?",
+        "paper": "attention",
+        "answer": "NeMo Guardrails supports two kinds of rails: 1. Custom programmable rails, which users can define at runtime using a user-specific modeling language (Colang). 2. Embedded rails, which are pre-defined rails that are part of the toolkit.",
+        "evidence": [
+            {
+                "chunk_id": "chunk_1",
+                "page": 1
+            },
+            {
+                "chunk_id": "chunk_12",
+                "page": 7
+            },
+            {
+                "chunk_id": "chunk_11",
+                "page": 6
+            },
+            {
+                "chunk_id": "chunk_9",
+                "page": 5
+            },
+            {
+                "chunk_id": "chunk_0",
+                "page": 1
+            }
+        ]
+    }
+]
