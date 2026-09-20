@@ -95,262 +95,295 @@ def reciprocal_rank_fusion(
 
 
 # --------------------------------------------------
-# Query
+# Get available papers
 # --------------------------------------------------
 
-query = input(
-    "\nAsk a question: "
-)
+def get_available_papers():
 
-query_embedding = embedding_model.encode(
-    query
-)
+    data = collection.get()
 
+    papers = set()
 
-# --------------------------------------------------
-# Papers
-# --------------------------------------------------
+    for metadata in data["metadatas"]:
 
-papers = [
-    "RAG",
-    "attention"
-]
-
-
-final_results = []
-
-
-# --------------------------------------------------
-# Process each paper separately
-# --------------------------------------------------
-
-for paper in papers:
-
-    # ----------------------------------------------
-    # Get all chunks from this paper
-    # ----------------------------------------------
-
-    paper_data = collection.get(
-        where={
-            "paper": paper
-        }
-    )
-
-    documents = paper_data["documents"]
-    metadatas = paper_data["metadatas"]
-    ids = paper_data["ids"]
-
-
-    # ----------------------------------------------
-    # Semantic retrieval
-    # ----------------------------------------------
-
-    document_embeddings = embedding_model.encode(
-        documents
-    )
-
-    semantic_scores = []
-
-    for chunk_id, embedding in zip(
-        ids,
-        document_embeddings
-    ):
-
-        score = embedding_model.similarity(
-            query_embedding,
-            embedding
+        papers.add(
+            metadata["paper"]
         )
 
-        semantic_scores.append(
-            (
-                chunk_id,
-                float(score)
-            )
-        )
-
-    semantic_scores.sort(
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    semantic_ids = [
-        chunk_id
-        for chunk_id, score in semantic_scores[:10]
-    ]
+    return sorted(papers)
 
 
-    # ----------------------------------------------
-    # BM25 retrieval
-    # ----------------------------------------------
+# --------------------------------------------------
+# Retrieve and rerank evidence
+# --------------------------------------------------
 
-    tokenized_documents = [
-        tokenize(document)
-        for document in documents
-    ]
+def retrieve_evidence(query):
 
-    bm25 = BM25Okapi(
-        tokenized_documents
-    )
-
-    tokenized_query = tokenize(
+    query_embedding = embedding_model.encode(
         query
     )
 
-    scores = bm25.get_scores(
-        tokenized_query
-    )
+    papers = get_available_papers()
 
-    bm25_ranked_indices = sorted(
-        range(len(scores)),
-        key=lambda i: scores[i],
-        reverse=True
-    )[:10]
-
-    bm25_ids = [
-        ids[i]
-        for i in bm25_ranked_indices
-    ]
+    final_results = []
 
 
-    # ----------------------------------------------
-    # Hybrid retrieval using RRF
-    # ----------------------------------------------
+    # --------------------------------------------------
+    # Process each paper separately
+    # --------------------------------------------------
 
-    hybrid_ids = reciprocal_rank_fusion(
-        semantic_ids,
-        bm25_ids
-    )
+    for paper in papers:
 
-    hybrid_ids = hybrid_ids[:10]
+        paper_data = collection.get(
+            where={
+                "paper": paper
+            }
+        )
+
+        documents = paper_data["documents"]
+        metadatas = paper_data["metadatas"]
+        ids = paper_data["ids"]
+
+        if not documents:
+            continue
 
 
-    # ----------------------------------------------
-    # Build reranker candidates
-    # ----------------------------------------------
+        # ----------------------------------------------
+        # Semantic retrieval
+        # ----------------------------------------------
 
-    id_to_document = dict(
-        zip(
-            ids,
+        document_embeddings = embedding_model.encode(
             documents
         )
-    )
 
-    id_to_metadata = dict(
-        zip(
+        semantic_scores = []
+
+        for chunk_id, embedding in zip(
             ids,
-            metadatas
+            document_embeddings
+        ):
+
+            score = embedding_model.similarity(
+                query_embedding,
+                embedding
+            )
+
+            semantic_scores.append(
+                (
+                    chunk_id,
+                    float(score)
+                )
+            )
+
+        semantic_scores.sort(
+            key=lambda x: x[1],
+            reverse=True
         )
-    )
 
-    candidates = []
-
-    for chunk_id in hybrid_ids:
-
-        candidates.append({
-            "id": chunk_id,
-            "text": id_to_document[chunk_id],
-            "metadata": id_to_metadata[chunk_id]
-        })
+        semantic_ids = [
+            chunk_id
+            for chunk_id, score
+            in semantic_scores[:10]
+        ]
 
 
-    # ----------------------------------------------
-    # Cross-encoder reranking
-    # ----------------------------------------------
+        # ----------------------------------------------
+        # BM25 retrieval
+        # ----------------------------------------------
 
-    pairs = [
-        (
-            query,
-            candidate["text"]
+        tokenized_documents = [
+            tokenize(document)
+            for document in documents
+        ]
+
+        bm25 = BM25Okapi(
+            tokenized_documents
         )
-        for candidate in candidates
-    ]
 
-    if not pairs:
-        continue
+        tokenized_query = tokenize(
+            query
+        )
 
-    rerank_scores = reranker.predict(
-        pairs
-    )
+        bm25_scores = bm25.get_scores(
+            tokenized_query
+        )
 
-    ranked_candidates = sorted(
-        zip(
-            candidates,
-            rerank_scores
-        ),
-        key=lambda x: x[1],
-        reverse=True
-    )
+        bm25_ranked_indices = sorted(
+            range(len(bm25_scores)),
+            key=lambda i: bm25_scores[i],
+            reverse=True
+        )[:10]
+
+        bm25_ids = [
+            ids[i]
+            for i in bm25_ranked_indices
+        ]
 
 
-    # ----------------------------------------------
-    # Keep top 5 from each paper
-    # ----------------------------------------------
+        # ----------------------------------------------
+        # Hybrid retrieval
+        # ----------------------------------------------
 
-    for candidate, score in ranked_candidates[:5]:
+        hybrid_ids = reciprocal_rank_fusion(
+            semantic_ids,
+            bm25_ids
+        )
 
-        final_results.append({
-            "paper": candidate["metadata"]["paper"],
-            "page": candidate["metadata"]["page"],
-            "chunk_id": candidate["metadata"]["chunk_id"],
-            "score": float(score),
-            "text": candidate["text"]
-        })
+        hybrid_ids = hybrid_ids[:10]
+
+
+        # ----------------------------------------------
+        # Build reranker candidates
+        # ----------------------------------------------
+
+        id_to_document = dict(
+            zip(
+                ids,
+                documents
+            )
+        )
+
+        id_to_metadata = dict(
+            zip(
+                ids,
+                metadatas
+            )
+        )
+
+        candidates = []
+
+        for chunk_id in hybrid_ids:
+
+            candidates.append({
+                "id": chunk_id,
+                "text": id_to_document[chunk_id],
+                "metadata": id_to_metadata[chunk_id]
+            })
+
+
+        if not candidates:
+            continue
+
+
+        # ----------------------------------------------
+        # Cross-encoder reranking
+        # ----------------------------------------------
+
+        pairs = [
+            (
+                query,
+                candidate["text"]
+            )
+            for candidate in candidates
+        ]
+
+        rerank_scores = reranker.predict(
+            pairs
+        )
+
+        ranked_candidates = sorted(
+            zip(
+                candidates,
+                rerank_scores
+            ),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+
+        # ----------------------------------------------
+        # Keep top 5 from each paper
+        # ----------------------------------------------
+
+        for candidate, score in ranked_candidates[:5]:
+
+            final_results.append({
+                "paper": candidate["metadata"]["paper"],
+                "page": candidate["metadata"]["page"],
+                "chunk_id": candidate["metadata"]["chunk_id"],
+                "score": float(score),
+                "text": candidate["text"]
+            })
+
+
+    return final_results
 
 
 # --------------------------------------------------
-# Group results by paper
+# Build evidence context
 # --------------------------------------------------
 
-grouped_results = {}
+def build_evidence_context(results):
 
-for result in final_results:
-
-    paper = result["paper"]
-
-    if paper not in grouped_results:
-
-        grouped_results[paper] = []
-
-    grouped_results[paper].append(
-        result
-    )
-
-
-# --------------------------------------------------
-# Build globally unique evidence context
-# --------------------------------------------------
-
-evidence_context = ""
-
-evidence_number = 1
-
-for paper, results in grouped_results.items():
-
-    evidence_context += (
-        f"\n\nPAPER: {paper}\n"
-    )
+    grouped_results = {}
 
     for result in results:
 
-        result["evidence_id"] = evidence_number
+        paper = result["paper"]
 
-        evidence_context += (
-            f"\n[EVIDENCE {evidence_number} | "
-            f"{paper}, Page {result['page']}]\n"
+        if paper not in grouped_results:
+
+            grouped_results[paper] = []
+
+        grouped_results[paper].append(
+            result
         )
 
-        evidence_context += result["text"]
 
-        evidence_context += "\n"
+    evidence_context = ""
 
-        evidence_number += 1
+    evidence_items = []
+
+    evidence_number = 1
+
+
+    for paper, paper_results in grouped_results.items():
+
+        evidence_context += (
+            f"\n\nPAPER: {paper}\n"
+        )
+
+        for result in paper_results:
+
+            result["evidence_id"] = (
+                evidence_number
+            )
+
+            evidence_context += (
+                f"\n[EVIDENCE {evidence_number} | "
+                f"{paper}, Page {result['page']}]\n"
+            )
+
+            evidence_context += result["text"]
+
+            evidence_context += "\n"
+
+
+            evidence_items.append({
+                "evidence_id": evidence_number,
+                "paper": result["paper"],
+                "page": result["page"],
+                "chunk_id": result["chunk_id"],
+                "score": result["score"],
+                "text": result["text"]
+            })
+
+            evidence_number += 1
+
+
+    return evidence_context, evidence_items
 
 
 # --------------------------------------------------
 # Generate answer
 # --------------------------------------------------
 
-prompt = f"""
+def generate_answer(
+    query,
+    evidence_context
+):
+
+    prompt = f"""
 You are a research assistant.
 
 Answer the user's question using ONLY the evidence
@@ -391,204 +424,227 @@ Question:
 Answer:
 """
 
+    response = ollama.chat(
+        model="lfm2.5:8b",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
 
-response = ollama.chat(
-    model="lfm2.5:8b",
-    messages=[
-        {
-            "role": "user",
-            "content": prompt
-        }
+    return response["message"]["content"].strip()
+
+
+# --------------------------------------------------
+# Generate deterministic citations
+# --------------------------------------------------
+
+def add_citations(
+    answer,
+    evidence_items
+):
+
+    if not evidence_items:
+
+        return answer
+
+
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        answer
+    )
+
+
+    evidence_texts = [
+        item["text"]
+        for item in evidence_items
     ]
-)
 
-
-answer = response["message"]["content"].strip()
-
-
-# --------------------------------------------------
-# Deterministic citation generation
-# --------------------------------------------------
-
-# Split answer into sentences
-sentences = re.split(
-    r'(?<=[.!?])\s+',
-    answer
-)
-
-
-# --------------------------------------------------
-# Prepare evidence embeddings
-# --------------------------------------------------
-
-evidence_items = []
-
-for paper, results in grouped_results.items():
-
-    for result in results:
-
-        evidence_items.append({
-            "evidence_id": result["evidence_id"],
-            "paper": result["paper"],
-            "page": result["page"],
-            "text": result["text"]
-        })
-
-
-evidence_texts = [
-    item["text"]
-    for item in evidence_items
-]
-
-
-if evidence_texts:
 
     evidence_embeddings = embedding_model.encode(
         evidence_texts
     )
 
-else:
 
-    evidence_embeddings = []
+    cited_answer = ""
 
 
-# --------------------------------------------------
-# Match each answer sentence to evidence
-# --------------------------------------------------
+    for sentence in sentences:
 
-cited_answer = ""
+        sentence = sentence.strip()
 
-for sentence in sentences:
+        if not sentence:
+            continue
 
-    sentence = sentence.strip()
 
-    if not sentence:
-        continue
-
-    sentence_embedding = embedding_model.encode(
-        sentence
-    )
-
-    similarities = []
-
-    for index, evidence_embedding in enumerate(
-        evidence_embeddings
-    ):
-
-        similarity = embedding_model.similarity(
-            sentence_embedding,
-            evidence_embedding
-        )
-
-        similarities.append(
-            (
-                index,
-                float(similarity)
+        sentence_embedding = (
+            embedding_model.encode(
+                sentence
             )
         )
 
 
-    # ----------------------------------------------
-    # Select strongest evidence
-    # ----------------------------------------------
-
-    similarities.sort(
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    top_evidence = similarities[:2]
+        similarities = []
 
 
-    citations = []
+        for index, evidence_embedding in enumerate(
+            evidence_embeddings
+        ):
 
-    for index, similarity in top_evidence:
+            similarity = embedding_model.similarity(
+                sentence_embedding,
+                evidence_embedding
+            )
 
-        evidence = evidence_items[index]
-
-        citation = (
-            f"[{evidence['paper']}, "
-            f"Page {evidence['page']}]"
-        )
-
-        if citation not in citations:
-
-            citations.append(
-                citation
+            similarities.append(
+                (
+                    index,
+                    float(similarity)
+                )
             )
 
 
-    citation_text = " ".join(
-        citations
+        similarities.sort(
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+
+        top_evidence = similarities[:2]
+
+
+        citations = []
+
+
+        for index, similarity in top_evidence:
+
+            evidence = evidence_items[index]
+
+            citation = (
+                f"[{evidence['paper']}, "
+                f"Page {evidence['page']}]"
+            )
+
+            if citation not in citations:
+
+                citations.append(
+                    citation
+                )
+
+
+        citation_text = " ".join(
+            citations
+        )
+
+
+        cited_answer += (
+            f"{sentence} {citation_text}\n\n"
+        )
+
+
+    return cited_answer.strip()
+
+
+# --------------------------------------------------
+# Main reusable RAG function
+# --------------------------------------------------
+
+def answer_question(query):
+
+    results = retrieve_evidence(
+        query
     )
 
 
-    cited_answer += (
-        f"{sentence} {citation_text}\n\n"
+    if not results:
+
+        return {
+            "answer": (
+                "I could not find relevant "
+                "evidence in the research papers."
+            ),
+            "sources": []
+        }
+
+
+    evidence_context, evidence_items = (
+        build_evidence_context(
+            results
+        )
     )
 
 
+    answer = generate_answer(
+        query,
+        evidence_context
+    )
+
+
+    cited_answer = add_citations(
+        answer,
+        evidence_items
+    )
+
+
+    sources = []
+
+    for evidence in evidence_items:
+
+        sources.append({
+            "paper": evidence["paper"],
+            "page": evidence["page"],
+            "chunk_id": evidence["chunk_id"]
+        })
+
+
+    return {
+        "answer": cited_answer,
+        "sources": sources
+    }
+
+
 # --------------------------------------------------
-# Display answer
+# Command-line mode
 # --------------------------------------------------
 
-print(
-    "\n" + "=" * 70
-)
+if __name__ == "__main__":
 
-print(
-    "COMPARATIVE ANSWER:"
-)
+    query = input(
+        "\nAsk a question: "
+    )
 
-print(
-    cited_answer.strip()
-)
+    result = answer_question(
+        query
+    )
 
-
-# --------------------------------------------------
-# Display retrieved evidence
-# --------------------------------------------------
-
-print(
-    "\n" + "=" * 70
-)
-
-print(
-    "RETRIEVED EVIDENCE:"
-)
-
-
-for paper, results in grouped_results.items():
 
     print(
-        "\n" + "-" * 70
+        "\n" + "=" * 70
     )
 
     print(
-        "PAPER:",
-        paper
+        "ANSWER:"
     )
 
-    for result in results:
+    print(
+        result["answer"]
+    )
+
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "SOURCES:"
+    )
+
+    for source in result["sources"]:
 
         print(
-            f"\nEvidence {result['evidence_id']}"
-        )
-
-        print(
-            "Page:",
-            result["page"]
-        )
-
-        print(
-            "Chunk ID:",
-            result["chunk_id"]
-        )
-
-        print(
-            "Reranker Score:",
-            round(
-                result["score"],
-                4
-            )
+            f"- {source['paper']} | "
+            f"Page {source['page']} | "
+            f"{source['chunk_id']}"
         )
