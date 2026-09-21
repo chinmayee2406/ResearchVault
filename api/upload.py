@@ -40,22 +40,34 @@ async def upload_paper(
 
     file_content = await file.read()
 
-    with open(file_path, "wb") as output_file:
+    with open(
+        file_path,
+        "wb"
+    ) as output_file:
 
-        output_file.write(file_content)
+        output_file.write(
+            file_content
+        )
 
     chunks = load_chunks()
 
     new_chunks = [
+
         chunk
+
         for chunk in chunks
+
         if chunk["paper"] == file_path.stem
+
     ]
 
     if not new_chunks:
 
         return {
-            "error": "No text could be extracted from the PDF."
+            "error": (
+                "No text could be extracted "
+                "from the PDF."
+            )
         }
 
     collection = create_collection()
@@ -70,23 +82,34 @@ async def upload_paper(
 
     for chunk in new_chunks:
 
-        chunk_id = f"chunk_{chunk['chunk_id']}"
+        chunk_id = chunk["chunk_id"]
 
         if chunk_id not in existing_chunk_ids:
 
-            filtered_chunks.append(chunk)
+            filtered_chunks.append(
+                chunk
+            )
 
     if not filtered_chunks:
 
         return {
-            "message": "Paper already exists.",
+
+            "message": (
+                "Paper already exists."
+            ),
+
             "paper": file_path.stem,
+
             "chunks_added": 0
+
         }
 
     texts = [
+
         chunk["text"]
+
         for chunk in filtered_chunks
+
     ]
 
     embeddings = embedding_model.encode(
@@ -100,7 +123,15 @@ async def upload_paper(
     )
 
     return {
-        "message": "Paper uploaded successfully.",
+
+        "message": (
+            "Paper uploaded successfully."
+        ),
+
         "paper": file_path.stem,
-        "chunks_added": len(filtered_chunks)
+
+        "chunks_added": len(
+            filtered_chunks
+        )
+
     }

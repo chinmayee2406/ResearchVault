@@ -2,8 +2,7 @@ import requests
 import streamlit as st
 
 
-API_URL = "http://127.0.0.1:8000/ask"
-
+API_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(
     page_title="ResearchVault",
@@ -13,38 +12,143 @@ st.set_page_config(
 
 
 st.title("📚 ResearchVault")
+
 st.caption(
     "Multi-Paper Research Intelligence System"
 )
 
-st.markdown(
-    """
-    Ask questions across research papers and receive
-    evidence-backed answers with page-level sources.
-    """
+
+# --------------------------------------------------
+# Upload research papers
+# --------------------------------------------------
+
+st.header("📄 Add Research Papers")
+
+uploaded_file = st.file_uploader(
+    "Upload a research paper",
+    type=["pdf"]
 )
+
+
+if uploaded_file is not None:
+
+    if st.button("Upload Paper"):
+
+        with st.spinner(
+            "Processing paper..."
+        ):
+
+            try:
+
+                response = requests.post(
+                    f"{API_URL}/upload",
+                    files={
+                        "file": (
+                            uploaded_file.name,
+                            uploaded_file.getvalue(),
+                            "application/pdf"
+                        )
+                    },
+                    timeout=300
+                )
+
+                response.raise_for_status()
+
+                result = response.json()
+
+                if "error" in result:
+
+                    st.error(
+                        result["error"]
+                    )
+
+                else:
+
+                    st.success(
+                        f"Paper '{result['paper']}' "
+                        f"uploaded successfully. "
+                        f"{result['chunks_added']} chunks added."
+                    )
+
+            except requests.exceptions.Timeout:
+
+                st.error(
+                    "The upload timed out. "
+                    "The paper may still be processing."
+                )
+
+            except requests.exceptions.ConnectionError:
+
+                st.error(
+                    "Could not connect to the "
+                    "ResearchVault API. "
+                    "Make sure FastAPI is running."
+                )
+
+            except requests.exceptions.RequestException as error:
+
+                st.error(
+                    f"Upload failed: {error}"
+                )
 
 
 st.divider()
 
 
+# --------------------------------------------------
+# Ask questions
+# --------------------------------------------------
+
+st.header("🔎 Ask ResearchVault")
+
+
+paper_options = [
+    "All Papers"
+]
+
+
+try:
+
+    papers_response = requests.get(
+        f"{API_URL}/papers",
+        timeout=10
+    )
+
+    if papers_response.status_code == 200:
+
+        available_papers = (
+            papers_response.json()
+        )
+
+        paper_options.extend(
+            available_papers
+        )
+
+except requests.exceptions.RequestException:
+
+    pass
+
+
+selected_paper = st.selectbox(
+    "Search in",
+    paper_options
+)
+
+
 question = st.text_area(
-    "🔎 Research Question",
+    "Research Question",
     placeholder=(
         "Example: What are the main components "
-        "of a RAG system?"
+        "of this paper?"
     ),
     height=120
 )
 
 
-ask_button = st.button(
+if st.button(
     "🚀 Ask ResearchVault",
     type="primary"
-)
-
-
-if ask_button:
+):
 
     if not question.strip():
 
@@ -54,6 +158,14 @@ if ask_button:
 
     else:
 
+        if selected_paper == "All Papers":
+
+            paper = None
+
+        else:
+
+            paper = selected_paper
+
         with st.spinner(
             "Searching papers and generating answer..."
         ):
@@ -61,9 +173,10 @@ if ask_button:
             try:
 
                 response = requests.post(
-                    API_URL,
+                    f"{API_URL}/ask",
                     json={
-                        "question": question
+                        "question": question,
+                        "paper": paper
                     },
                     timeout=300
                 )
@@ -74,7 +187,7 @@ if ask_button:
 
                 st.divider()
 
-                st.header("📝 Answer")
+                st.subheader("📝 Answer")
 
                 st.markdown(
                     result["answer"]
@@ -82,7 +195,7 @@ if ask_button:
 
                 st.divider()
 
-                st.header("📑 Sources")
+                st.subheader("📑 Sources")
 
                 sources = result.get(
                     "sources",
@@ -110,7 +223,9 @@ if ask_button:
                                 f"**Source {index}**"
                             )
 
-                            col1, col2, col3 = st.columns(3)
+                            col1, col2, col3 = (
+                                st.columns(3)
+                            )
 
                             with col1:
 
@@ -145,17 +260,14 @@ if ask_button:
             except requests.exceptions.Timeout:
 
                 st.error(
-                    "The request timed out. "
-                    "The local RAG pipeline may still "
-                    "be processing."
+                    "The request timed out."
                 )
 
             except requests.exceptions.ConnectionError:
 
                 st.error(
                     "Could not connect to the "
-                    "ResearchVault API. Make sure "
-                    "FastAPI is running on port 8000."
+                    "ResearchVault API."
                 )
 
             except requests.exceptions.RequestException as error:

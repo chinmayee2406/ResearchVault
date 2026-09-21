@@ -1,7 +1,8 @@
 from fastapi import FastAPI
-from api.upload import router as upload_router
+
 from api.schemas import AskRequest, AskResponse
-from search import answer_question
+from api.upload import router as upload_router
+from search import answer_question, get_available_papers
 
 
 app = FastAPI(
@@ -9,7 +10,10 @@ app = FastAPI(
     description="Multi-Paper Research Intelligence RAG System",
     version="1.0.0"
 )
+
+
 app.include_router(upload_router)
+
 
 @app.get("/health")
 def health_check():
@@ -18,6 +22,12 @@ def health_check():
         "status": "healthy",
         "service": "ResearchVault API"
     }
+
+
+@app.get("/papers")
+def get_papers():
+
+    return get_available_papers()
 
 
 @app.post(
