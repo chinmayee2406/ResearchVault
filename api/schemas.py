@@ -5,6 +5,8 @@ class AskRequest(BaseModel):
 
     question: str
 
+    paper: str | None = None
+
 
 class Source(BaseModel):
 

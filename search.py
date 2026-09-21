@@ -7,10 +7,6 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 
-# --------------------------------------------------
-# ChromaDB
-# --------------------------------------------------
-
 client = chromadb.PersistentClient(
     path="data/chroma"
 )
@@ -20,10 +16,6 @@ collection = client.get_collection(
 )
 
 
-# --------------------------------------------------
-# Models
-# --------------------------------------------------
-
 embedding_model = SentenceTransformer(
     "all-MiniLM-L6-v2"
 )
@@ -32,10 +24,6 @@ reranker = CrossEncoder(
     "cross-encoder/ms-marco-MiniLM-L-6-v2"
 )
 
-
-# --------------------------------------------------
-# BM25 tokenizer
-# --------------------------------------------------
 
 def tokenize(text):
 
@@ -49,10 +37,6 @@ def tokenize(text):
 
     return text.split()
 
-
-# --------------------------------------------------
-# Reciprocal Rank Fusion
-# --------------------------------------------------
 
 def reciprocal_rank_fusion(
     semantic_results,
@@ -94,10 +78,6 @@ def reciprocal_rank_fusion(
     ]
 
 
-# --------------------------------------------------
-# Get available papers
-# --------------------------------------------------
-
 def get_available_papers():
 
     data = collection.get()
@@ -113,24 +93,24 @@ def get_available_papers():
     return sorted(papers)
 
 
-# --------------------------------------------------
-# Retrieve and rerank evidence
-# --------------------------------------------------
-
-def retrieve_evidence(query):
+def retrieve_evidence(
+    query,
+    selected_paper=None
+):
 
     query_embedding = embedding_model.encode(
         query
     )
 
-    papers = get_available_papers()
+    if selected_paper:
+
+        papers = [selected_paper]
+
+    else:
+
+        papers = get_available_papers()
 
     final_results = []
-
-
-    # --------------------------------------------------
-    # Process each paper separately
-    # --------------------------------------------------
 
     for paper in papers:
 
@@ -146,11 +126,6 @@ def retrieve_evidence(query):
 
         if not documents:
             continue
-
-
-        # ----------------------------------------------
-        # Semantic retrieval
-        # ----------------------------------------------
 
         document_embeddings = embedding_model.encode(
             documents
@@ -186,11 +161,6 @@ def retrieve_evidence(query):
             in semantic_scores[:10]
         ]
 
-
-        # ----------------------------------------------
-        # BM25 retrieval
-        # ----------------------------------------------
-
         tokenized_documents = [
             tokenize(document)
             for document in documents
@@ -219,22 +189,12 @@ def retrieve_evidence(query):
             for i in bm25_ranked_indices
         ]
 
-
-        # ----------------------------------------------
-        # Hybrid retrieval
-        # ----------------------------------------------
-
         hybrid_ids = reciprocal_rank_fusion(
             semantic_ids,
             bm25_ids
         )
 
         hybrid_ids = hybrid_ids[:10]
-
-
-        # ----------------------------------------------
-        # Build reranker candidates
-        # ----------------------------------------------
 
         id_to_document = dict(
             zip(
@@ -260,14 +220,8 @@ def retrieve_evidence(query):
                 "metadata": id_to_metadata[chunk_id]
             })
 
-
         if not candidates:
             continue
-
-
-        # ----------------------------------------------
-        # Cross-encoder reranking
-        # ----------------------------------------------
 
         pairs = [
             (
@@ -290,11 +244,6 @@ def retrieve_evidence(query):
             reverse=True
         )
 
-
-        # ----------------------------------------------
-        # Keep top 5 from each paper
-        # ----------------------------------------------
-
         for candidate, score in ranked_candidates[:5]:
 
             final_results.append({
@@ -305,13 +254,8 @@ def retrieve_evidence(query):
                 "text": candidate["text"]
             })
 
-
     return final_results
 
-
-# --------------------------------------------------
-# Build evidence context
-# --------------------------------------------------
 
 def build_evidence_context(results):
 
@@ -329,13 +273,11 @@ def build_evidence_context(results):
             result
         )
 
-
     evidence_context = ""
 
     evidence_items = []
 
     evidence_number = 1
-
 
     for paper, paper_results in grouped_results.items():
 
@@ -358,7 +300,6 @@ def build_evidence_context(results):
 
             evidence_context += "\n"
 
-
             evidence_items.append({
                 "evidence_id": evidence_number,
                 "paper": result["paper"],
@@ -370,13 +311,8 @@ def build_evidence_context(results):
 
             evidence_number += 1
 
-
     return evidence_context, evidence_items
 
-
-# --------------------------------------------------
-# Generate answer
-# --------------------------------------------------
 
 def generate_answer(
     query,
@@ -437,10 +373,6 @@ Answer:
     return response["message"]["content"].strip()
 
 
-# --------------------------------------------------
-# Generate deterministic citations
-# --------------------------------------------------
-
 def add_citations(
     answer,
     evidence_items
@@ -450,26 +382,21 @@ def add_citations(
 
         return answer
 
-
     sentences = re.split(
         r"(?<=[.!?])\s+",
         answer
     )
-
 
     evidence_texts = [
         item["text"]
         for item in evidence_items
     ]
 
-
     evidence_embeddings = embedding_model.encode(
         evidence_texts
     )
 
-
     cited_answer = ""
-
 
     for sentence in sentences:
 
@@ -478,16 +405,13 @@ def add_citations(
         if not sentence:
             continue
 
-
         sentence_embedding = (
             embedding_model.encode(
                 sentence
             )
         )
 
-
         similarities = []
-
 
         for index, evidence_embedding in enumerate(
             evidence_embeddings
@@ -505,18 +429,14 @@ def add_citations(
                 )
             )
 
-
         similarities.sort(
             key=lambda x: x[1],
             reverse=True
         )
 
-
         top_evidence = similarities[:2]
 
-
         citations = []
-
 
         for index, similarity in top_evidence:
 
@@ -533,41 +453,37 @@ def add_citations(
                     citation
                 )
 
-
         citation_text = " ".join(
             citations
         )
-
 
         cited_answer += (
             f"{sentence} {citation_text}\n\n"
         )
 
-
     return cited_answer.strip()
 
 
-# --------------------------------------------------
-# Main reusable RAG function
-# --------------------------------------------------
-
-def answer_question(query):
+def answer_question(
+    query,
+    selected_paper=None
+):
 
     results = retrieve_evidence(
-        query
+        query,
+        selected_paper
     )
-
 
     if not results:
 
         return {
             "answer": (
                 "I could not find relevant "
-                "evidence in the research papers."
+                "evidence in the selected "
+                "research papers."
             ),
             "sources": []
         }
-
 
     evidence_context, evidence_items = (
         build_evidence_context(
@@ -575,18 +491,15 @@ def answer_question(query):
         )
     )
 
-
     answer = generate_answer(
         query,
         evidence_context
     )
 
-
     cited_answer = add_citations(
         answer,
         evidence_items
     )
-
 
     sources = []
 
@@ -598,16 +511,11 @@ def answer_question(query):
             "chunk_id": evidence["chunk_id"]
         })
 
-
     return {
         "answer": cited_answer,
         "sources": sources
     }
 
-
-# --------------------------------------------------
-# Command-line mode
-# --------------------------------------------------
 
 if __name__ == "__main__":
 
@@ -618,7 +526,6 @@ if __name__ == "__main__":
     result = answer_question(
         query
     )
-
 
     print(
         "\n" + "=" * 70
@@ -631,7 +538,6 @@ if __name__ == "__main__":
     print(
         result["answer"]
     )
-
 
     print(
         "\n" + "=" * 70

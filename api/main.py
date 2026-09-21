@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-
+from api.upload import router as upload_router
 from api.schemas import AskRequest, AskResponse
 from search import answer_question
 
@@ -9,7 +9,7 @@ app = FastAPI(
     description="Multi-Paper Research Intelligence RAG System",
     version="1.0.0"
 )
-
+app.include_router(upload_router)
 
 @app.get("/health")
 def health_check():
@@ -29,7 +29,8 @@ def ask_question(
 ):
 
     result = answer_question(
-        request.question
+        request.question,
+        request.paper
     )
 
     return {
