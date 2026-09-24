@@ -27,7 +27,7 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 LLM_MODEL_NAME = "lfm2.5:8b"
 COMPARISON_CANDIDATES_PER_PAPER = 12
-COMPARISON_EVIDENCE_PER_PAPER = 4
+COMPARISON_EVIDENCE_PER_PAPER = 3
 
 TEMP_STORAGE_DIR.mkdir(
     parents=True,
@@ -828,300 +828,240 @@ def retrieve_comparison_results(
     comparison_papers: list[str]
 ):
     """
-    Retrieve comparison evidence independently for every requested paper.
+    Retrieve a balanced evidence dossier for EVERY requested paper.
 
-    The comparison pipeline deliberately combines:
-    1. early-paper anchor chunks (title/abstract/introduction),
-    2. dimension-focused semantic retrieval,
-    3. paper-local BM25,
-    4. RRF fusion,
-    5. cross-encoder reranking.
-
-    This is important because a generic query such as
-    "difference between X and Y" often retrieves only the most distinctive
-    paper or only an attack example. Comparison needs evidence about the
-    papers themselves, not just the most similar passage.
+    Comparison retrieval is deliberately paper-local.  Each paper gets
+    evidence for the same core dimensions so that the answer model receives
+    comparable information instead of whichever paper happens to dominate
+    the global similarity ranking.
     """
 
     paper_indices = build_paper_indices(metadatas)
     comparison_results = []
 
-    # These queries deliberately target different parts of a research paper.
     focus_queries = [
-        f"{question} paper objective purpose research goal benchmark",
-        f"{question} problem formulation methodology method approach framework tasks",
-        f"{question} evaluation experiments results metrics performance",
-        f"{question} contribution findings limitations significance",
+        "objective purpose research goal problem benchmark",
+        "method methodology approach framework architecture tasks",
+        "evaluation experiments results metrics findings",
+        "main contribution key findings conclusions significance",
+        "limitations challenges failure cases future work",
     ]
 
-    # Encode all focus queries once. This avoids repeatedly invoking the
-    # embedding model for every paper/query combination.
     focus_embeddings = embedding_model.encode(
         focus_queries,
         normalize_embeddings=True
     )
 
     for paper_name in comparison_papers:
-
         indices = paper_indices.get(paper_name, [])
-
         if not indices:
             continue
 
-        # --------------------------------------------------------
-        # 1. ANCHOR EVIDENCE
-        # --------------------------------------------------------
-        # The first chunks usually contain the title, abstract and/or
-        # introduction. They are valuable for identifying what the paper
-        # itself is about, especially for benchmark papers.
-        anchor_indices = indices[:2]
-
-        anchor_results = []
-
-        for index in anchor_indices:
-            anchor_results.append(
-                {
-                    "score": 0.0,
-                    "metadata": metadatas[index],
-                    "document": documents[index],
-                    "source_type": "paper_anchor",
-                }
-            )
-
-        # --------------------------------------------------------
-        # 2. SEMANTIC RETRIEVAL FOR THIS PAPER ONLY
-        # --------------------------------------------------------
-
-        semantic_rrf = {}
-
-        for focus_embedding in focus_embeddings:
-
-            semantic_results = collection.query(
-                query_embeddings=[focus_embedding.tolist()],
-                n_results=min(
-                    COMPARISON_CANDIDATES_PER_PAPER,
-                    len(indices)
-                ),
-                where={"paper": paper_name}
-            )
-
-            semantic_documents = semantic_results["documents"][0]
-            semantic_metadatas = semantic_results["metadatas"][0]
-
-            for rank, metadata in enumerate(semantic_metadatas):
-
-                chunk_id = metadata["chunk_id"]
-
-                if chunk_id not in semantic_rrf:
-                    semantic_rrf[chunk_id] = {
-                        "score": 0.0,
-                        "metadata": metadata,
-                        "document": semantic_documents[rank],
-                        "source_type": "semantic",
-                    }
-
-                semantic_rrf[chunk_id]["score"] += (
-                    1 / (60 + rank + 1)
-                )
-
-        # --------------------------------------------------------
-        # 3. PAPER-LOCAL BM25
-        # --------------------------------------------------------
-
-        comparison_bm25_query = (
-            f"{paper_name} {question} "
-            "objective purpose problem methodology method approach "
-            "framework benchmark tasks evaluation experiments results "
-            "metrics performance contribution findings limitations"
-        )
-
-        comparison_bm25_tokens = tokenize(
-            comparison_bm25_query
-        )
-
-        paper_bm25 = BM25Okapi(
-            [
-                tokenize(documents[i])
-                for i in indices
-            ]
-        )
-
-        paper_bm25_raw_scores = paper_bm25.get_scores(
-            comparison_bm25_tokens
-        )
-
-        paper_bm25_scores = {
-            index: float(paper_bm25_raw_scores[position])
-            for position, index in enumerate(indices)
-        }
-
-        ranked_bm25_indices = sorted(
-            indices,
-            key=lambda i: paper_bm25_scores[i],
-            reverse=True
-        )[:COMPARISON_CANDIDATES_PER_PAPER]
-
-        # --------------------------------------------------------
-        # 4. RRF FUSION
-        # --------------------------------------------------------
-
-        fused_results = {}
-
-        for chunk_id, result in semantic_rrf.items():
-            fused_results[chunk_id] = {
-                "score": result["score"],
-                "metadata": result["metadata"],
-                "document": result["document"],
-                "source_type": result["source_type"],
-            }
-
-        for rank, index in enumerate(ranked_bm25_indices):
-
-            metadata = metadatas[index]
-            chunk_id = metadata["chunk_id"]
-
-            if chunk_id not in fused_results:
-                fused_results[chunk_id] = {
-                    "score": 0.0,
-                    "metadata": metadata,
-                    "document": documents[index],
-                    "source_type": "bm25",
-                }
-
-            fused_results[chunk_id]["score"] += (
-                1 / (60 + rank + 1)
-            )
-
-        fused_results = sorted(
-            fused_results.values(),
-            key=lambda x: x["score"],
-            reverse=True
-        )[:COMPARISON_CANDIDATES_PER_PAPER]
-
-        # --------------------------------------------------------
-        # 5. CROSS-ENCODER RERANKING
-        # --------------------------------------------------------
-
-        if fused_results:
-
-            rerank_query = (
-                f"Paper: {paper_name}. "
-                f"Comparison question: {question}. "
-                "Find evidence that explains this paper's own "
-                "objective, problem, method, evaluation, results, "
-                "contribution, or limitations."
-            )
-
-            rerank_pairs = [
-                (
-                    rerank_query,
-                    result["document"]
-                )
-                for result in fused_results
-            ]
-
-            rerank_scores = cross_encoder.predict(
-                rerank_pairs
-            )
-
-            for result, score in zip(
-                fused_results,
-                rerank_scores
-            ):
-                result["rerank_score"] = float(score)
-
-            reranked_results = sorted(
-                fused_results,
-                key=lambda x: x["rerank_score"],
-                reverse=True
-            )
-        else:
-            reranked_results = []
-
-        # --------------------------------------------------------
-        # 6. BUILD DIVERSE, PAPER-OWNED EVIDENCE
-        # --------------------------------------------------------
-        # Keep early-paper anchors plus the strongest distinct pages.
-        # This prevents a concrete attack example from crowding out
-        # the paper's own abstract/method/evaluation evidence.
+        # Keep the paper's opening chunks because they usually contain the
+        # title, abstract, problem statement and high-level contribution.
         selected = []
         seen_chunk_ids = set()
         seen_pages = set()
 
-        for result in anchor_results:
-            chunk_id = result["metadata"]["chunk_id"]
-            page = result["metadata"]["page"]
+        for index in indices[:2]:
+            result = {
+                "score": 0.0,
+                "metadata": metadatas[index],
+                "document": documents[index],
+                "source_type": "paper_anchor",
+                "dimension": "overview",
+            }
+            selected.append(result)
+            seen_chunk_ids.add(result["metadata"]["chunk_id"])
+            seen_pages.add(result["metadata"]["page"])
 
-            if chunk_id not in seen_chunk_ids:
-                selected.append(result)
-                seen_chunk_ids.add(chunk_id)
-                seen_pages.add(page)
+        # Retrieve independently for every comparison dimension.
+        dimension_candidates = []
 
-        for result in reranked_results:
+        paper_bm25 = BM25Okapi([
+            tokenize(documents[i]) for i in indices
+        ])
+
+        for dimension, focus_embedding, focus_query in zip(
+            ["objective", "method", "evaluation", "findings", "limitations"],
+            focus_embeddings,
+            focus_queries,
+        ):
+            semantic = collection.query(
+                query_embeddings=[focus_embedding.tolist()],
+                n_results=min(COMPARISON_CANDIDATES_PER_PAPER, len(indices)),
+                where={"paper": paper_name},
+            )
+
+            semantic_documents = semantic["documents"][0]
+            semantic_metadatas = semantic["metadatas"][0]
+
+            fused = {}
+
+            for rank, metadata in enumerate(semantic_metadatas):
+                chunk_id = metadata["chunk_id"]
+                fused.setdefault(
+                    chunk_id,
+                    {
+                        "score": 0.0,
+                        "metadata": metadata,
+                        "document": semantic_documents[rank],
+                        "dimension": dimension,
+                    },
+                )
+                fused[chunk_id]["score"] += 1 / (60 + rank + 1)
+
+            bm25_scores_local = paper_bm25.get_scores(tokenize(
+                f"{paper_name} {focus_query}"
+            ))
+
+            ranked_local = sorted(
+                indices,
+                key=lambda i: bm25_scores_local[indices.index(i)],
+                reverse=True,
+            )[:COMPARISON_CANDIDATES_PER_PAPER]
+
+            for rank, index in enumerate(ranked_local):
+                metadata = metadatas[index]
+                chunk_id = metadata["chunk_id"]
+                fused.setdefault(
+                    chunk_id,
+                    {
+                        "score": 0.0,
+                        "metadata": metadata,
+                        "document": documents[index],
+                        "dimension": dimension,
+                    },
+                )
+                fused[chunk_id]["score"] += 1 / (60 + rank + 1)
+
+            candidates = sorted(
+                fused.values(),
+                key=lambda x: x["score"],
+                reverse=True,
+            )[:COMPARISON_CANDIDATES_PER_PAPER]
+
+            if candidates:
+                rerank_query = (
+                    f"Research paper: {paper_name}. "
+                    f"Comparison dimension: {dimension}. "
+                    f"Question: {question}. "
+                    f"Find the paper's own evidence about {focus_query}."
+                )
+
+                pairs = [
+                    (rerank_query, candidate["document"])
+                    for candidate in candidates
+                ]
+                scores = cross_encoder.predict(pairs)
+
+                for candidate, score in zip(candidates, scores):
+                    candidate["rerank_score"] = float(score)
+
+                candidates.sort(
+                    key=lambda x: x["rerank_score"],
+                    reverse=True,
+                )
+
+                # Take the strongest candidate for this dimension.  This
+                # guarantees balanced coverage across papers and dimensions.
+                best = candidates[0]
+                dimension_candidates.append(best)
+
+        # Add one best passage per dimension, preferring distinct pages.
+        for result in dimension_candidates:
             chunk_id = result["metadata"]["chunk_id"]
             page = result["metadata"]["page"]
 
             if chunk_id in seen_chunk_ids:
                 continue
 
-            # Prefer a new page so the comparison receives different
-            # sections of the paper.
-            if page not in seen_pages:
-                selected.append(result)
-                seen_chunk_ids.add(chunk_id)
-                seen_pages.add(page)
+            if page in seen_pages:
+                continue
 
-            if len(selected) >= COMPARISON_EVIDENCE_PER_PAPER:
-                break
+            selected.append(result)
+            seen_chunk_ids.add(chunk_id)
+            seen_pages.add(page)
 
-        # If there are not enough distinct pages, fill from reranked results.
-        if len(selected) < COMPARISON_EVIDENCE_PER_PAPER:
-            for result in reranked_results:
+        # If page diversity prevented some dimensions from being selected,
+        # fill from the remaining dimension candidates.
+        if len(selected) < 6:
+            for result in dimension_candidates:
                 chunk_id = result["metadata"]["chunk_id"]
-
                 if chunk_id in seen_chunk_ids:
                     continue
-
                 selected.append(result)
                 seen_chunk_ids.add(chunk_id)
-
-                if len(selected) >= COMPARISON_EVIDENCE_PER_PAPER:
+                if len(selected) >= 6:
                     break
 
         comparison_results.extend(selected)
 
-    # ------------------------------------------------------------
-    # HARD PROVENANCE CHECK
-    # ------------------------------------------------------------
-    # An explicit comparison is allowed to continue ONLY when every
-    # requested paper actually contributed evidence.
     retrieved_papers = {
         result["metadata"]["paper"]
         for result in comparison_results
     }
-
     expected_papers = set(comparison_papers)
 
     if retrieved_papers != expected_papers:
-
         missing_papers = [
-            paper
-            for paper in comparison_papers
+            paper for paper in comparison_papers
             if paper not in retrieved_papers
         ]
-
         raise HTTPException(
             status_code=422,
             detail=(
-                "Comparison stopped to protect source accuracy. "
-                f"Requested papers: {comparison_papers}. "
-                f"Evidence found for: {sorted(retrieved_papers) or ['none']}. "
-                f"Missing evidence for: {missing_papers}. "
-                "ResearchVault will not substitute another uploaded paper."
-            )
+                "Comparison could not retrieve evidence for every requested "
+                f"paper. Missing: {missing_papers}. "
+                "No other paper was substituted."
+            ),
         )
 
     return comparison_results
+
+
+def build_comparison_fallback(comparison_papers, results):
+    """Build a source-grounded comparison if the local model ignores the task."""
+
+    by_paper = {paper: [] for paper in comparison_papers}
+    for result in results:
+        paper = result["metadata"]["paper"]
+        if paper in by_paper:
+            by_paper[paper].append(result)
+
+    def excerpt(items, keywords):
+        for item in items:
+            text = item["document"].replace("\n", " ").strip()
+            lower = text.lower()
+            if any(word in lower for word in keywords):
+                return text[:500] + ("..." if len(text) > 500 else "")
+        if items:
+            text = items[0]["document"].replace("\n", " ").strip()
+            return text[:500] + ("..." if len(text) > 500 else "")
+        return "Not established by the retrieved evidence."
+
+    dimensions = [
+        ("Objective", ["objective", "purpose", "goal", "benchmark"]),
+        ("Problem", ["problem", "challenge", "risk", "attack"]),
+        ("Method", ["method", "framework", "approach", "scenario", "task"]),
+        ("Evaluation", ["evaluation", "experiment", "metric", "result", "performance"]),
+        ("Findings", ["finding", "conclusion", "show", "improve", "result"]),
+        ("Contribution", ["contribution", "propose", "introduce", "present"]),
+    ]
+
+    header = "| Dimension | " + " | ".join(comparison_papers) + " |"
+    separator = "|---|" + "---|" * len(comparison_papers)
+    rows = [header, separator]
+
+    for label, keywords in dimensions:
+        cells = [
+            excerpt(by_paper[paper], keywords)
+            for paper in comparison_papers
+        ]
+        cells = [cell.replace("|", "/") for cell in cells]
+        rows.append("| " + label + " | " + " | ".join(cells) + " |")
+
+    return "\n".join(rows) + "\n\n**Key differences:** The table above is built directly from the retrieved evidence for each requested paper."
 
 
 # ============================================================
@@ -1529,9 +1469,11 @@ def ask_question(
                 ]
 
                 prompt_passage = passage
-                if len(prompt_passage) > 3200:
+                # Keep comparison prompts compact when several papers
+                # are compared at once.
+                if len(prompt_passage) > 1800:
                     prompt_passage = (
-                        prompt_passage[:3200].rsplit(" ", 1)[0]
+                        prompt_passage[:1800].rsplit(" ", 1)[0]
                         + " ..."
                     )
 
@@ -1623,7 +1565,7 @@ retrieved separately for each identified paper.
 - Explicitly name the paper when describing a difference.
 - If one paper lacks evidence for a comparison dimension, say so
   rather than filling the gap from general knowledge.
-- If BOTH requested papers have substantive evidence, you MUST provide
+- If EVERY requested paper has substantive evidence, you MUST provide
   a direct comparison. Do not use the generic "not enough information"
   refusal merely because one particular dimension is missing.
 - Prefer evidence from the paper's abstract/introduction/method/evaluation
@@ -1631,20 +1573,13 @@ retrieved separately for each identified paper.
 - Do not treat an example or scenario inside a paper as the paper's identity.
 
 MARKDOWN TABLE RULES:
+- For three or more requested papers, use one column for EACH paper.
 - If you use a comparison table, it MUST be valid Markdown.
 - Use exactly one header row and one separator row.
 - Put a pipe (|) between every cell.
-- Use this structure:
-
-| Dimension | Paper A | Paper B |
-|---|---|---|
-| Objective | ... | ... |
-| Problem | ... | ... |
-| Method | ... | ... |
-| Evaluation | ... | ... |
-| Contribution | ... | ... |
-
-- Replace Paper A and Paper B with the actual paper names.
+- Use these comparison dimensions when supported:
+  Objective, Problem, Method, Evaluation, Contribution.
+- Replace each paper column with the exact requested paper name.
 - Do not concatenate the header text with the first cell.
 - Do not output HTML tables.
 - After the table, give a short 2-4 sentence synthesis of the main differences.
@@ -1662,6 +1597,12 @@ MARKDOWN TABLE RULES:
     comparison_papers_text = ", ".join(
         comparison_papers
     ) if is_comparison else ""
+
+    comparison_columns = (
+        " | ".join(comparison_papers)
+        if is_comparison
+        else ""
+    )
 
     prompt = f"""
 You are the answer engine for ResearchVault,
@@ -1682,12 +1623,15 @@ USER QUESTION:
 REQUESTED COMPARISON PAPERS:
 {comparison_papers_text if is_comparison else "None"}
 
+COMPARISON TABLE COLUMNS:
+{comparison_columns if is_comparison else "None"}
+
 SOURCE CONTRACT:
 {(
     "This is an explicit paper comparison. Compare ONLY these requested papers: "
     + comparison_papers_text
     + ". Every evidence block is labeled with its source paper. "
-    "Both requested papers have passed the provenance check."
+    "Every requested paper has passed the provenance check."
     if is_comparison
     else
     "This is not an explicit paper comparison."
@@ -1826,6 +1770,107 @@ Now answer the question.
             ]
             .strip()
         )
+
+        # Hide model reasoning from the user-facing response.
+        # Some local models return reasoning inside <think>...</think>.
+        if "<think>" in answer and "</think>" in answer:
+            answer = answer.split("</think>", 1)[1].strip()
+
+        # --------------------------------------------------------
+        # COMPARISON ANSWER VALIDATION
+        # --------------------------------------------------------
+        # A comparison answer is not valid if the local model only talks
+        # about one of the requested papers. Give it one compact repair
+        # pass. If it still fails, use the deterministic evidence table.
+        if is_comparison:
+            normalized_answer = normalize_paper_name(answer)
+            missing_names = [
+                paper
+                for paper in comparison_papers
+                if normalize_paper_name(paper) not in normalized_answer
+            ]
+
+            if missing_names:
+                repair_evidence = []
+                for paper in comparison_papers:
+                    paper_items = [
+                        result
+                        for result in reranked_results
+                        if result["metadata"]["paper"] == paper
+                    ][:6]
+
+                    repair_evidence.append(
+                        "\n".join(
+                            [
+                                f"PAPER: {paper}",
+                                *[
+                                    f"- Page {item['metadata']['page']}: "
+                                    f"{item['document'][:1000]}"
+                                    for item in paper_items
+                                ],
+                            ]
+                        )
+                    )
+
+                repair_evidence_text = "\n\n".join(repair_evidence)
+
+                repair_prompt = f"""
+You are repairing a multi-paper research comparison.
+
+USER QUESTION:
+{request.question}
+
+YOU MUST COMPARE EVERY ONE OF THESE PAPERS:
+{', '.join(comparison_papers)}
+
+SOURCE EVIDENCE:
+{repair_evidence_text}
+
+Write a direct comparison of ALL requested papers.
+Use a Markdown table with columns for every paper and rows for:
+Objective | Problem | Method | Evaluation | Findings | Contribution | Limitations
+
+Rules:
+- Use only the supplied evidence.
+- Do not omit any requested paper.
+- Do not replace a paper with a related work mentioned inside it.
+- If a cell is unsupported, write: Not established by the retrieved evidence.
+- After the table, give 3 concise key differences.
+"""
+
+                repair_response = ollama.chat(
+                    model=LLM_MODEL_NAME,
+                    options={"temperature": 0.0},
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": repair_prompt,
+                        }
+                    ],
+                )
+
+                repaired = (
+                    repair_response["message"]["content"]
+                    .strip()
+                )
+
+                if "<think>" in repaired and "</think>" in repaired:
+                    repaired = repaired.split("</think>", 1)[1].strip()
+
+                repaired_normalized = normalize_paper_name(repaired)
+                still_missing = [
+                    paper
+                    for paper in comparison_papers
+                    if normalize_paper_name(paper) not in repaired_normalized
+                ]
+
+                if not still_missing:
+                    answer = repaired
+                else:
+                    answer = build_comparison_fallback(
+                        comparison_papers,
+                        reranked_results,
+                    )
 
     except Exception as exc:
 
