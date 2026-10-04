@@ -1,52 +1,23 @@
-# ResearchVault
-
-### Multi-Paper Research Intelligence RAG System
-
-ResearchVault is a local Retrieval-Augmented Generation (RAG) research assistant designed to analyze, retrieve, compare, and synthesize information across multiple research papers.
-
-It combines semantic retrieval, BM25 lexical retrieval, Reciprocal Rank Fusion (RRF), cross-encoder reranking, and a locally hosted LLM to generate grounded answers with page-level supporting evidence.
-
----
-
-## Overview
-
-Reading and comparing multiple research papers manually can make it difficult to:
-
-- locate relevant evidence quickly
-- compare methodologies across papers
-- identify differences in evaluation strategies
-- synthesize findings across multiple sources
-- trace generated answers back to the original papers
-
-ResearchVault addresses this by creating a temporary research workspace where users can upload multiple PDFs and ask questions about them.
-
-The system retrieves relevant evidence from the uploaded papers before generating an answer, reducing dependence on the language model's parametric knowledge.
-
----
-
-## Key Features
-
-### Multi-Paper Question Answering
-
-Upload multiple research papers and ask questions across the entire research session.
-
-Example:
-
-> What are the main challenges addressed by these papers?
-
----
-
-### Hybrid Retrieval
-
-ResearchVault combines two complementary retrieval approaches:
-
-**Semantic Retrieval**
-
-Uses Sentence Transformers to identify conceptually relevant passages.
-
-**BM25 Retrieval**
-
-Uses lexical matching to retrieve passages containing important query terms.
-
-The two rankings are combined using **Reciprocal Rank Fusion (RRF)**.
-
+#ResearchVault — Multi-Paper Research Intelligence RAG System
+ResearchVault is a multi-paper Retrieval-Augmented Generation (RAG) system for querying and comparing research papers.
+It processes PDFs, extracts and chunks their content, and creates semantic embeddings for retrieval.
+It combines semantic search and BM25 using Reciprocal Rank Fusion (RRF) to improve evidence retrieval.
+A cross-encoder reranker selects the most relevant evidence before passing it to a local LLM.
+The system generates evidence-grounded answers with page-level citations and supports multi-paper comparison.
+##Problem Statement
+Research papers contain large volumes of information spread across many pages, making manual analysis and comparison time-consuming. Traditional keyword search can miss semantically relevant information, while relying only on an LLM can produce answers that are not grounded in the source documents. A system is needed that can efficiently retrieve relevant evidence from multiple papers and generate answers that can be traced back to their sources.
+##Solution
+ResearchVault builds an end-to-end RAG pipeline that processes and indexes research papers, retrieves relevant evidence using semantic search and BM25, combines the results using RRF, and improves ranking using a cross-encoder. The selected evidence is passed to a local LLM to generate grounded answers with page-level source references. A paper-aware comparison pipeline also allows information from multiple research papers to be analyzed side-by-side.
+##Tech Stack
+- Language: Python
+- RAG: Retrieval-Augmented Generation
+- Embeddings: Sentence Transformers — all-MiniLM-L6-v2
+- Vector Database: ChromaDB
+- Lexical Retrieval: BM25
+- Hybrid Retrieval: Reciprocal Rank Fusion (RRF)
+- Reranking: Cross-Encoder — ms-marco-MiniLM-L-6-v2
+- LLM: Ollama — llama3.2:3b
+- PDF Processing: PyMuPDF
+- Backend: FastAPI
+- Frontend: Streamlit
+- Evaluation: Recall@5, MRR, answer relevance, faithfulness, citation accuracy
