@@ -22,4 +22,5 @@ ResearchVault builds an end-to-end RAG pipeline that processes and indexes resea
 - Frontend: Streamlit
 - Evaluation: Recall@5, MRR, answer relevance, faithfulness, citation accuracy
 ## Architecture
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/2c246c3a-77b1-4e62-a3a3-b71c656677e9" />
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/20073e99-ea3e-4401-9992-e6d7857de4bc" />
+
